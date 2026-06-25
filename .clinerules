@@ -1,0 +1,28 @@
+# Cline Rules — Joey's Coding Standards
+
+## 1. 絕不擅自改 Code
+- Check / Bug Report 階段：只睇、只 report，絕不擅自修改任何檔案
+- 只有用戶明確講「fix」、「改」、「implement」、「加」、「刪」等指示先可以動手
+- 如果發現 Bug，先 report 俾用戶，等用戶決定要唔要 fix
+
+## 2. 改 Code 前必須確認
+- 明確列出將會改動嘅檔案同內容
+- 等用戶 approve 先執行
+
+## 3. 不改 = 不改
+- 用戶講「唔改」、「check only」、「睇下先」、「唔好改」= 絕對唔改
+
+## 4. 改 Code 前強制 VPS Check（不可跳過）
+- 任何 bug / error 報告 → 先 SSH VPS check remote 現狀（env vars, docker logs, file content）
+- 未 check VPS 前，絕不 create / edit 任何 local file
+- 確認 remote 問題根源先決定 local 改咩
+
+## 5. Deploy + Verify（不可跳過）
+- 改完 code → 必須 deploy 上 VPS（SCP / git push + pull / docker compose up -d --build）
+- Deploy 後必須 SSH check docker logs 確認 fix 生效
+- 未 verify 唔算完成
+
+## 6. 改 Code 前必須列出清單 + 等 Approve
+- 明確列出：改邊個 file、改咩內容、點解要改
+- 等用戶 approve 先執行
+- 不改 = 不改
