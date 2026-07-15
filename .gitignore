@@ -1,0 +1,4 @@
+.env
+straddle_scan_*.txt
+dip_scan_*.txt
+scan_*.txt

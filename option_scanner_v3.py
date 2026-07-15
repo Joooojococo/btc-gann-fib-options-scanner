@@ -31,6 +31,73 @@ class C:
     DIM    = '\033[2m'
     RESET  = '\033[0m'
 
+# ─────────────────────────────────────────────
+#  模組 0：已驗證江恩正方 + 撈底計劃（鎖定數字，唔再重新計）
+#  來源：Agent 1-5 終極整合報告 @ 2026-06-26
+# ─────────────────────────────────────────────
+VERIFIED_GANN = {
+    'pivot_date': '2022-11-21',
+    'pivot_price': 15360.0,
+    'grid_per_day': 113.36,
+    'fine_grid': 500,
+    'lines': [
+        # (price, name, strength, role)
+        (60866, 'Gann 1×8 DOWN', 3, '多空分界'),
+        (59489, 'Gann 1×6 DOWN', 2, '中期阻力'),
+        (59075, '三重共振支撐', 3, '最強支撐共振'),
+        (56733, 'Gann 1×4 DOWN', 2, '🟢 第一站撈底'),
+        (54261, 'Gann 1×2 主升浪線', 3, '🟢 長線最強支撐'),
+        (48466, 'Gann 1×2 DOWN', 1, '🔴 終極防線'),
+        (44856, 'Fib 0.238 終極支撐', 2, '🔴 終極支撐'),
+    ],
+    'vacuum_warning': '$48,466 → $44,856 之間係無底真空區，一旦穿終極防線會加速下跌',
+}
+
+# 三個撈底位 × 最優CALL Strike × 掛單價（Agent 5 鎖定）
+DIP_BUY_PLAN = {
+    'target_rebound': 60000,   # 目標反彈價
+    'rebound_name': '$60,000',
+    'entries': [
+        {
+            'dip_price': 56733,
+            'label': '第一站 Gann 1×4 DOWN',
+            'best_strike': 62000,
+            'theo_price_per_contract': 2328,
+            'order_price_per_contract': 2095,  # theo × 0.9
+            'cost_001': 20.95,
+            'rebound_value': 3347,
+            'rebound_profit': 12.53,
+            'roi_pct': 59.8,
+        },
+        {
+            'dip_price': 54261,
+            'label': '最強支撐 Gann 1×2 主升浪線',
+            'best_strike': 57000,
+            'theo_price_per_contract': 2507,
+            'order_price_per_contract': 2256,  # theo × 0.9
+            'cost_001': 22.56,
+            'rebound_value': 5164,
+            'rebound_profit': 29.08,
+            'roi_pct': 128.9,
+        },
+        {
+            'dip_price': 48466,
+            'label': '終極防線 Gann 1×2 DOWN',
+            'best_strike': 55000,
+            'theo_price_per_contract': 612,
+            'order_price_per_contract': 551,   # theo × 0.9
+            'cost_001': 5.51,
+            'rebound_value': 2712,
+            'rebound_profit': 21.61,
+            'roi_pct': 392.2,
+        },
+    ],
+    'total_cost': 49.02,
+    'take_profit_1': (59075, '三重共振支撐', 50),
+    'take_profit_2': (60866, '多空分界 Gann 1×8 DOWN', 50),
+    'stop_loss_pct': 2.0,  # 撈底位下方2%
+}
+
 def hdr(text):
     print(f"\n{C.BOLD}{C.CYAN}{'═'*62}{C.RESET}")
     print(f"{C.BOLD}{C.WHITE}  {text}{C.RESET}")
@@ -822,5 +889,206 @@ def main():
         ok(f"報告已儲存: {fname}")
 
 
+# ─────────────────────────────────────────────
+#  --dip 模式：三層撈底終極掃描（已驗證數據）
+#  用法：python3 option_scanner_v3.py --dip
+# ─────────────────────────────────────────────
+def run_dip_scan():
+    hdr("🔮 江恩三層撈底 × Jul31 CALL 掃描 🤖")
+    print(f"  基於：5大Agent終極整合 @ 2026-06-26")
+    print(f"  已驗證江恩正方起點：{VERIFIED_GANN['pivot_date']} @ ${VERIFIED_GANN['pivot_price']:,}")
+    print()
+
+    currency = 'BTC'
+    today = datetime.now(tz=timezone.utc)
+
+    # 1. 現價
+    print(f"  [1/4] 拉取 {currency} 現價...", end='', flush=True)
+    spot = get_spot(currency)
+    if spot <= 0:
+        bad("無法獲取現價"); return
+    print(f" {C.GREEN}${spot:,.2f}{C.RESET}")
+
+    # 2. 打印已驗證江恩線
+    sec("📐 已驗證江恩線（$60K→$44K）")
+    print(f"  {'價格':<10} {'名稱':<28} {'強度':<6} {'角色'}")
+    print(f"  {'─'*10} {'─'*28} {'─'*6} {'─'*20}")
+    for price, name, strength, role in VERIFIED_GANN['lines']:
+        stars = '🔥' * strength
+        dist = spot - price
+        dist_pct = dist / spot * 100
+        arrow = '⬇' if dist > 0 else '⬆'
+        marker = f"{arrow} {abs(dist_pct):.1f}%"
+        col = C.RED if dist > 0 else C.GREEN
+        print(f"  ${price:<9,} {name:<28} {stars:<6} {col}{role} ({marker}){C.RESET}")
+    print(f"\n  {C.YELLOW}⚠️  {VERIFIED_GANN['vacuum_warning']}{C.RESET}")
+
+    # 3. 打印撈底計劃
+    plan = DIP_BUY_PLAN
+    sec(f"🎯 三層撈底計劃 — 目標反彈價：{plan['rebound_name']}")
+    print(f"  {'撈底位':<10} {'最優CALL':<10} {'理論價/張':<10} {'掛單價/張':<10} {'0.01張成本':<11} {'彈$60K賺':<11} {'ROI%'}")
+    print(f"  {'─'*10} {'─'*10} {'─'*10} {'─'*10} {'─'*11} {'─'*11} {'─'*6}")
+    for e in plan['entries']:
+        print(f"  ${e['dip_price']:<9,} ${e['best_strike']:<9,} ${e['theo_price_per_contract']:<9,} "
+              f"${e['order_price_per_contract']:<9,} ${e['cost_001']:<10.2f} ${e['rebound_profit']:<10.2f} {e['roi_pct']}%")
+    print(f"\n  {C.BOLD}三張總成本: ${plan['total_cost']:.2f}{C.RESET}")
+    print(f"  {C.BOLD}食糊1: ${plan['take_profit_1'][0]:,} ({plan['take_profit_1'][1]}) → 平{plan['take_profit_1'][2]}%{C.RESET}")
+    print(f"  {C.BOLD}食糊2: ${plan['take_profit_2'][0]:,} ({plan['take_profit_2'][1]}) → 平{plan['take_profit_2'][2]}%{C.RESET}")
+    print(f"  {C.RED}止蝕: 撈底位下方 {plan['stop_loss_pct']}%{C.RESET}")
+
+    # 4. 掃描 Jul31 CALL（每個撈底位嘅最優Strike）
+    all_strikes = [e['best_strike'] for e in plan['entries']]
+    strike_labels = {e['best_strike']: f"${e['dip_price']:,}撈底" for e in plan['entries']}
+
+    sec(f"📈 掃描 Jul31 CALL 真實報價（目標Strike: {', '.join(f'${s:,}' for s in all_strikes)}）")
+    print(f"  拉取 {currency} 期權清單...", end='', flush=True)
+    insts = get_instruments(currency)
+    options = [i for i in insts if i['option_details']['option_type'] == 'C']
+    print(f" {len(options)} 個CALL")
+
+    # 過濾：Jul31到期 + 目標Strike + 附近Strike
+    target_strikes_set = set(all_strikes)
+    nearby_strikes = set()
+    for ts in all_strikes:
+        for s in [ts - 1000, ts + 1000, ts + 2000, ts + 3000, ts + 5000]:
+            nearby_strikes.add(s)
+    all_target = target_strikes_set | nearby_strikes
+
+    relevant = []
+    for c in options:
+        opts = c['option_details']
+        strike = int(opts['strike'])
+        exp_ts = opts['expiry']
+        exp_date = datetime.fromtimestamp(exp_ts, tz=timezone.utc)
+        dte = (exp_date - today).total_seconds() / 86400
+
+        # Jul31 = 35 DTE, 範圍 30-38 日
+        if 28 <= dte <= 40 and strike in all_target:
+            relevant.append(c)
+
+    if not relevant:
+        print(f"\n  {C.RED}❌ 無符合條件的 Jul31 CALL 期權{C.RESET}")
+        return
+
+    print(f"  拉取 {len(relevant)} 個 Jul31 CALL 報價...")
+    results = []
+    for c in relevant:
+        name = c['instrument_name']
+        t = get_ticker(name)
+        if not t:
+            continue
+
+        opts = t['option_details']
+        strike = int(opts['strike'])
+        exp_ts = opts['expiry']
+        exp_date = datetime.fromtimestamp(exp_ts, tz=timezone.utc)
+        dte = (exp_date - today).total_seconds() / 86400
+        otm = (strike - spot) / spot * 100
+
+        mark = float(t.get('mark_price', 0))
+        bid = float(t.get('best_bid_price', 0) or 0)
+        ask = float(t.get('best_ask_price', 0) or 0)
+        min_a = float(t.get('minimum_amount', '0.01'))
+
+        p = t.get('option_pricing', {})
+        delta = float(p.get('delta', 0) or 0)
+        gamma = float(p.get('gamma', 0) or 0)
+        theta = float(p.get('theta', 0) or 0)
+        iv = float(p.get('iv', 0) or 0)
+
+        if bid <= 0 and ask <= 0:
+            continue
+
+        mid = (bid + ask) / 2 if (bid + ask) > 0 else ask
+        spr = (ask - bid) / mid * 100 if mid > 0 else 200
+
+        prem_001 = mark * 0.01  # 0.01張成本
+        prem_1 = mark * 1.0    # 1張成本
+
+        # Mark這個Strike是否是撈底計劃的目標
+        is_target = strike in target_strikes_set
+        match_label = strike_labels.get(strike, '')
+
+        results.append({
+            'name': name, 'strike': strike, 'expiry': exp_date.strftime('%Y-%m-%d'),
+            'dte': round(dte, 1), 'otm': round(otm, 1),
+            'bid': bid, 'ask': ask, 'mark': mark,
+            'spread': round(spr, 1), 'delta': round(delta, 4),
+            'gamma': round(gamma, 6), 'theta': round(theta, 2),
+            'iv': round(iv * 100, 1),
+            'prem_001': round(prem_001, 2), 'prem_1': round(prem_1, 2),
+            'is_target': is_target, 'match_label': match_label,
+        })
+
+    results.sort(key=lambda x: (not x['is_target'], x['strike']))
+
+    # 輸出表格
+    print(f"\n  {'合約':<30} {'到期':<12} {'DTE':<5} {'OTM%':<7} "
+          f"{'Bid':<8} {'Ask':<8} {'Spr%':<6} {'IV%':<6} {'Δ':<7} {'0.01張':<9} {'1張':<9} {'標記'}")
+    print(f"  {'─'*30} {'─'*12} {'─'*5} {'─'*7} "
+          f"{'─'*8} {'─'*8} {'─'*6} {'─'*6} {'─'*7} {'─'*9} {'─'*9} {'─'*12}")
+
+    for r in results:
+        col = C.GREEN if r['is_target'] else C.DIM
+        tag = f"🎯 {r['match_label']}" if r['is_target'] else ''
+        print(f"  {col}{r['name']:<30}{C.RESET} {r['expiry']:<12} {r['dte']:<5.1f} "
+              f"{r['otm']:<7.1f} {r['bid']:<8.1f} {r['ask']:<8.1f} "
+              f"{r['spread']:<6.1f} {r['iv']:<6.1f} {r['delta']:<7.4f} "
+              f"${r['prem_001']:<8.2f} ${r['prem_1']:<8.2f} {col}{tag}{C.RESET}")
+
+    # 對比：理論價 vs 真實價
+    sec("📊 理論價 vs 真實市場價 對比")
+    print(f"  {'撈底位':<10} {'Strike':<8} {'理論價/張(B-S)':<17} {'真實Mark/張':<14} {'真實0.01張':<12} {'差距'}")
+    print(f"  {'─'*10} {'─'*8} {'─'*17} {'─'*14} {'─'*12} {'─'*15}")
+    for entry in plan['entries']:
+        strike = entry['best_strike']
+        theo = entry['theo_price_per_contract']
+        real_data = [r for r in results if r['strike'] == strike]
+        if real_data:
+            rd = real_data[0]
+            real_mark = rd['mark']
+            real_001 = rd['prem_001']
+            diff = real_mark - theo
+            diff_pct = diff / theo * 100 if theo > 0 else 0
+            diff_col = C.RED if diff > 0 else C.GREEN
+            print(f"  ${entry['dip_price']:<9,} ${strike:<7,} ${theo:<16,} "
+                  f"${real_mark:<13,.0f} ${real_001:<11.2f} "
+                  f"{diff_col}{diff:+.0f} ({diff_pct:+.0f}%){C.RESET}")
+        else:
+            print(f"  ${entry['dip_price']:<9,} ${strike:<7,} ${theo:<16,} "
+                  f"{C.RED}⚠️ 無報價{C.RESET}")
+
+    # 總結
+    sec("🔑 執行要點")
+    print(f"  {C.BOLD}1. 以上報價為實時 Derive.xyz 數據，掛單前請再次確認")
+    print(f"  2. 限價單用 Ask/Bid 中間價掛單，唔好市價追")
+    print(f"  3. Jul10 結算前輕倉，結算後先主菜（Jul31）")
+    print(f"  4. 每個撈底位只買一次 0.01 張，唔溝淡")
+    print(f"  5. 任何一張到食糊目標（$59,075 / $60,866）就執行{C.RESET}")
+    print(f"\n  {C.RED}{C.BOLD}⚠️  期權可能全損。以上不構成投資建議。{C.RESET}\n")
+
+    # 儲存
+    fname = f"dip_scan_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
+    with open(fname, 'w', encoding='utf-8') as f:
+        f.write(f"BTC 三層撈底 Jul31 CALL 掃描 {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+        f.write(f"現價: ${spot:,.2f}\n\n")
+        f.write("=== 已驗證江恩線 ===\n")
+        for price, name, strength, role in VERIFIED_GANN['lines']:
+            pct = (spot - price) / spot * 100
+            f.write(f"${price:,} - {name} (強度:{strength}) - {role} - 距現價{pct:+.1f}%\n")
+        f.write(f"\n=== 撈底計劃 ===\n")
+        for e in plan['entries']:
+            f.write(f"${e['dip_price']:,} → ${e['best_strike']:,} CALL | 掛單${e['order_price_per_contract']}/張 | 0.01張=${e['cost_001']} | 彈$60K賺${e['rebound_profit']}\n")
+        f.write(f"總成本: ${plan['total_cost']}\n\n")
+        f.write("=== Jul31 CALL 真實報價 ===\n")
+        for r in results:
+            tag = f" 🎯{r['match_label']}" if r['is_target'] else ''
+            f.write(f"{r['name']} | Mark${r['mark']:.0f} | Bid{r['bid']:.1f}/Ask{r['ask']:.1f} | IV{r['iv']}% | Δ{r['delta']:.4f} | 0.01張${r['prem_001']}{tag}\n")
+    ok(f"報告已儲存: {fname}")
+
+
 if __name__ == '__main__':
-    main()
+    if '--dip' in sys.argv:
+        run_dip_scan()
+    else:
+        main()
