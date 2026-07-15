@@ -10,6 +10,7 @@ Scan 所有 BTC options expiry + strike 嘅 straddle（call + put）成本，
 import asyncio
 import json
 import logging
+import math
 import os
 import sys
 from datetime import datetime, timezone, timedelta
@@ -41,6 +42,7 @@ def get_iv_threshold(currency: str) -> float:
     return float(val) if val else IV_THRESHOLD
 MAX_STRIKE_DISTANCE_PCT = float(os.getenv("STRADDLE_MAX_STRIKE_DIST", "0.10"))  # within 10% of spot
 DISCORD_WEBHOOK = os.getenv("ITA_DISCORD_WEBHOOK_URL", "")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 HKT = timezone(timedelta(hours=8))
 
 # Cost % 門檻：短期（≤14日）同長期（>14日）分開
@@ -227,6 +229,89 @@ def build_straddles(tickers: dict, spot: float) -> List[dict]:
 
 
 # ═══════════════════════════════════════════════════════
+#  LLM Direction Analysis
+# ═══════════════════════════════════════════════════════
+
+# Gann key levels for BTC (from verified analysis)
+GANN_LINES_BTC = [
+    (60866, 'Gann 1x8 DOWN', '多空分界'),
+    (59489, 'Gann 1x6 DOWN', '中期阻力'),
+    (59075, '三重共振支撐', '最強支撐'),
+    (56733, 'Gann 1x4 DOWN', '第一站撈底'),
+    (54261, 'Gann 1x2 主升浪線', '長線最強支撐'),
+    (48466, 'Gann 1x2 DOWN', '終極防線'),
+]
+
+async def llm_direction_analysis(session: httpx.AsyncClient, currency: str, spot: float,
+                                  straddle_info: dict, hv: Optional[float]) -> Optional[str]:
+    """Call DeepSeek to analyze direction and recommend directional trade over blind straddle."""
+    if not DEEPSEEK_API_KEY:
+        return None
+
+    gann_text = ''
+    if currency == 'BTC':
+        gann_text = '\n'.join(
+            f"  ${p:,} {n} ({r}) — 距現價 {abs(p-spot)/spot*100:.1f}%"
+            for p, n, r in GANN_LINES_BTC
+        )
+
+    s = straddle_info
+    hv_str = f"HV(30d): {hv:.1%} → IV {'折價' if s['avg_iv'] < hv else '溢價'} {abs(s['avg_iv']-hv)/hv*100:.0f}%" if hv else ""
+    be_up = s['strike'] + s['straddle_cost']
+    be_down = s['strike'] - s['straddle_cost']
+
+    straddle_text = f"""=== 掃到平 Straddle ===
+  幣種: {currency}
+  Strike: ${s['strike']:,.0f} (距 spot {s['distance_pct']:.1f}%)
+  Straddle 成本: ${s['straddle_cost']:,.0f} ({s['straddle_pct']:.1f}% of spot)
+  IV: {s['avg_iv']:.1%}
+  {hv_str}
+  Call: ${s['call_ask']:,.0f} (IV {s['call_iv']:.1%})
+  Put:  ${s['put_ask']:,.0f} (IV {s['put_iv']:.1%})
+  BE上: ${be_up:,.0f} ({(be_up-spot)/spot*100:+.1f}%)
+  BE下: ${be_down:,.0f} ({(be_down-spot)/spot*100:+.1f}%)
+  到期: {fmt_expiry(s['expiry'])} ({s['days_to_expiry']}d)"""
+
+    prompt = f"""你係有30年經驗的頂級期權交易員。請用廣東話（粵語）分析，給出專業簡潔的方向判斷同策略建議。
+
+=== 市場數據 ===
+幣種: {currency}
+現價: ${spot:,.2f}
+
+=== 江恩關鍵位 ===
+{gann_text if gann_text else '無江恩數據（非BTC）'}
+
+{straddle_text}
+
+請提供：
+1. **方向判斷**（2-3句）：依家偏好多定淡？定係橫行？引用江恩位支持你嘅判斷
+2. **Straddle 值唔值買**（1-2句）：IV 折價但係方向明確嘅話，straddle 可能唔抵。定係橫行先至啱買 straddle？
+3. **Directional 建議**（2-3句）：如果方向明確，建議買 CALL 定 PUT？邊個 Strike？目標價？止損位？
+4. **替代策略**（1-2句）：如果方向唔明確，除咗 straddle 仲有咩選擇？
+5. **風險提示**（1句）：最大風險係咩？
+
+用簡潔直接語氣。如果方向明確，明確建議單邊而唔好建議 straddle。"""
+
+    try:
+        resp = await session.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            json={
+                "model": "deepseek-chat",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 800,
+                "temperature": 0.7,
+            },
+            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
+            timeout=45,
+        )
+        data = resp.json()
+        return data['choices'][0]['message']['content']
+    except Exception as e:
+        log.warning(f"LLM analysis failed: {e}")
+        return None
+
+
+# ═══════════════════════════════════════════════════════
 #  Discord
 # ═══════════════════════════════════════════════════════
 
@@ -395,6 +480,18 @@ async def scan_currency(session: httpx.AsyncClient, currency: str, scan_count: i
     await discord_notify(session, msg)
     log.info(f"🔔 Alert: {alert_key} IV {best['avg_iv']:.1%}" +
              (f" < HV {hv:.1%}" if hv else ""))
+
+    # LLM direction analysis
+    if DEEPSEEK_API_KEY:
+        log.info(f"🤖 Requesting LLM direction analysis for {currency}...")
+        analysis = await llm_direction_analysis(session, currency, spot, best, hv)
+        if analysis:
+            llm_msg = f"🤖 {currency} 方向分析（${spot:,.0f}）\n```\n{analysis}\n```"
+            await discord_notify(session, llm_msg)
+            log.info(f"🤖 LLM analysis sent for {currency}")
+        else:
+            log.warning(f"LLM analysis failed for {currency}")
+
     return True
 
 
