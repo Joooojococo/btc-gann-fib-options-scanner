@@ -272,19 +272,28 @@ async def llm_direction_analysis(session: httpx.AsyncClient, currency: str, spot
   BE下: ${be_down:,.0f} ({(be_down-spot)/spot*100:+.1f}%)
   到期: {fmt_expiry(s['expiry'])} ({s['days_to_expiry']}d)"""
 
+    if currency == 'BTC':
+        context_section = f"""=== 江恩關鍵位（BTC） ===
+{gann_text}"""
+    else:
+        context_section = f"""=== 波動率數據 ===
+HV(30d): {hv:.1%} | IV: {s['avg_iv']:.1%}
+IV {'折價' if s['avg_iv'] < hv else '溢價'} {abs(s['avg_iv']-hv)/hv*100:.0f}% vs HV
+Call IV: {s['call_iv']:.1%} | Put IV: {s['put_iv']:.1%}
+（江恩位只適用BTC，非BTC幣種用IV/HV判斷）"""
+
     prompt = f"""你係有30年經驗的頂級期權交易員。請用廣東話（粵語）分析，給出專業簡潔的方向判斷同策略建議。
 
 === 市場數據 ===
 幣種: {currency}
 現價: ${spot:,.2f}
 
-=== 江恩關鍵位 ===
-{gann_text if gann_text else '無江恩數據（非BTC）'}
+{context_section}
 
 {straddle_text}
 
 請提供：
-1. **方向判斷**（2-3句）：依家偏好多定淡？定係橫行？引用江恩位支持你嘅判斷
+1. **方向判斷**（2-3句）：依家偏好多定淡？定係橫行？{'引用江恩位支持你嘅判斷' if currency == 'BTC' else '用IV/HV同straddle定價判斷'}
 2. **Straddle 值唔值買**（1-2句）：IV 折價但係方向明確嘅話，straddle 可能唔抵。定係橫行先至啱買 straddle？
 3. **Directional 建議**（2-3句）：如果方向明確，建議買 CALL 定 PUT？邊個 Strike？目標價？止損位？
 4. **替代策略**（1-2句）：如果方向唔明確，除咗 straddle 仲有咩選擇？
@@ -486,7 +495,7 @@ async def scan_currency(session: httpx.AsyncClient, currency: str, scan_count: i
         log.info(f"🤖 Requesting LLM direction analysis for {currency}...")
         analysis = await llm_direction_analysis(session, currency, spot, best, hv)
         if analysis:
-            llm_msg = f"🤖 {currency} 方向分析（${spot:,.0f}）\n```\n{analysis}\n```"
+            llm_msg = f"🤖 {currency} 方向分析（${spot:,.0f} | {fmt_expiry(best['expiry'])} {best['days_to_expiry']}d）\n```\n{analysis}\n```"
             await discord_notify(session, llm_msg)
             log.info(f"🤖 LLM analysis sent for {currency}")
         else:
